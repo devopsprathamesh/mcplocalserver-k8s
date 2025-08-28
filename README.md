@@ -209,3 +209,84 @@ mcp-k8s-server/
 - Docker image and optional metrics endpoint
 
 Happy shipping!
+
+---
+
+## 16) Local Testing with k3d (step-by-step)
+
+This guide helps you spin up or reuse a local Kubernetes cluster via k3d and point the MCP server at it.
+
+Prereqs:
+- k3d installed (e.g., `brew install k3d` on macOS)
+- kubectl installed and in PATH
+
+### A) Use an existing k3d cluster
+1. List clusters:
+```bash
+k3d cluster list
+```
+2. Export kubeconfig for your cluster (replace `mycluster`):
+```bash
+k3d kubeconfig get mycluster > /tmp/kubeconfig-k3d-mycluster
+```
+3. Verify access:
+```bash
+KUBECONFIG=/tmp/kubeconfig-k3d-mycluster kubectl get ns
+```
+4. Run the MCP server (production mode is simplest for ESM):
+```bash
+cd mcp-k8s-server
+npm run build
+KUBECONFIG=/tmp/kubeconfig-k3d-mycluster \
+LOG_LEVEL=info \
+K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mycluster kubectl config current-context) \
+K8S_NAMESPACE=default \
+MCP_K8S_READONLY=true \
+npm start
+```
+
+Optional (development mode via ts-node):
+```bash
+# If you see ESM module resolution errors with ts-node, prefer the production mode above.
+KUBECONFIG=/tmp/kubeconfig-k3d-mycluster \
+LOG_LEVEL=info \
+K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mycluster kubectl config current-context) \
+K8S_NAMESPACE=default \
+MCP_K8S_READONLY=true \
+npm run dev
+```
+
+### B) Create a fresh k3d cluster
+1. Create cluster:
+```bash
+k3d cluster create mcp-k8s --agents 0 --servers 1
+```
+2. Export kubeconfig and verify:
+```bash
+k3d kubeconfig get mcp-k8s > /tmp/kubeconfig-k3d-mcp-k8s
+KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s kubectl get ns
+```
+3. Run the MCP server (production mode recommended):
+```bash
+cd mcp-k8s-server
+npm run build
+KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s \
+LOG_LEVEL=info \
+K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s kubectl config current-context) \
+K8S_NAMESPACE=default \
+MCP_K8S_READONLY=true \
+npm start
+```
+
+### C) Test with your MCP client (e.g., GitHub Copilot)
+In Copilot chat, try:
+- "Use `k8s-local` to run `cluster.health`"
+- "Use `k8s-local` to run `ns.listNamespaces`"
+- "Use `k8s-local` to run `pods.listPods` with `{ \"namespace\": \"default\" }`"
+
+### D) Troubleshooting (k3d specific)
+- If `npm run dev` crashes with `ERR_MODULE_NOT_FOUND` for `*.js` in `src/*`:
+  - Prefer `npm run build && npm start`, or
+  - Adjust the dev script to use `ts-node --esm` and ensure ESM-compatible imports.
+- If kubectl can’t reach the cluster, re-export kubeconfig and verify `K8S_CONTEXT`.
+- If mutating tools are blocked, check `MCP_K8S_READONLY` and allowlists.
