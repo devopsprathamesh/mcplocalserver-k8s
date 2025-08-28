@@ -1,4 +1,4 @@
-mcp-k8s-server – Newbie Guide to the Codebase and Design (Step-by-step)
+mcp-k8s-server – Newbie Guide (Go Edition)
 
 Purpose (What this project does)
 - This is a local MCP (Model Context Protocol) server that lets tools like GitHub Copilot talk to your Kubernetes cluster in a safe, controlled way.
@@ -6,169 +6,98 @@ Purpose (What this project does)
   - Read-only toggle
   - Namespace and kind allowlists
   - Dry-run by default for mutations
-  - Parameter validation (zod)
 
 High-level Architecture (How it’s wired)
-- @modelcontextprotocol/sdk provides the MCP server runtime over stdio.
-  - We create an McpServer and register tools, each with a name and (optionally) a zod schema.
-  - We start a StdioServerTransport so MCP clients (like Copilot) can invoke tools.
-- @kubernetes/client-node provides Kubernetes access.
-  - We load a KubeConfig from env/in-cluster/default.
-  - We create typed API clients (CoreV1, AppsV1, Logs, Exec, KubernetesObjectApi).
-  - For generic resource operations, we use KubernetesObjectApi to work across GVKs (including CRDs) without manually building URLs.
-- pino logs structured messages, but we keep the default simple.
-- zod validates parameters for every tool call to prevent bad input.
+- MCP transport: JSON-RPC 2.0 over stdio using LSP-style framing (Content-Length headers). Logs go to stderr.
+- Server core: Minimal MCP server in Go that implements initialize, tools/list, tools/call and dispatches to a tool registry.
+- Kubernetes access: client-go typed clients (CoreV1, etc.) and dynamic client + RESTMapper for generic GVK operations (including CRDs).
+- Authz & safety: read-only mode, namespace/kind allowlists, and a simple per-tool rate limiter.
 
 Where things live (Project structure)
-- src/server.ts – Starts the MCP server, registers all tools, and attaches stdio transport.
-- src/k8s.ts – Initializes Kubernetes clients and holds shared configuration/state.
-- src/schemas.ts – zod schemas for tool inputs (so invalid requests are rejected politely).
-- src/authz.ts – Safety/authorization: read-only guard, namespace/kind allowlists, and a simple rate limiter.
-- src/tools/cluster.ts – Tools for cluster health, contexts, namespaces.
-- src/tools/workloads.ts – Tools dealing with Pods: list, get, logs, exec.
-- src/tools/resources.ts – Generic resource get/list/apply/delete using GVK.
-- src/tools/secrets.ts – Get/set Kubernetes Secrets (values are redacted by default).
-- examples/* – Sample manifest and a Copilot MCP client configuration.
+- cmd/server/main.go – Entrypoint. Creates logger, loads Kubernetes clients, registers tools, runs stdio server, graceful shutdown.
+- pkg/mcp – Protocol logic (framed stdio transport, JSON-RPC types, tool registry, built-ins).
+- pkg/k8s – Kubernetes client loader and helpers (logs, dynamic discovery, YAML to unstructured).
+- internal/authz – Safety/authorization controls (read-only, allowlists, rate limiting).
+- internal/tools – Tool groups:
+  - cluster.go – cluster.health, cluster.listContexts, cluster.setContext, ns.listNamespaces
+  - workloads.go – pods.listPods, pods.get, pods.logs, pods.exec
+  - resources.go – resources.get/apply/delete (SSA)
+  - secrets.go – secrets.get/set (values redacted unless allowed)
+- examples/* – Sample deployment and MCP client config.
 
-Packages we chose (and why)
-- @modelcontextprotocol/sdk: Official MCP SDK to define a server and tools.
-- @kubernetes/client-node: Official Kubernetes JavaScript client for API access, logs, and exec.
-- zod: Simple runtime validation of tool parameters (fail fast and clearly).
-- yaml: Parse multi-document YAML manifests for apply.
-- pino: Minimal/no-fuss structured logging.
+Key packages (and why)
+- client-go: Official Kubernetes Go client for typed APIs, discovery, exec/logs, and dynamic resources.
+- log/slog: Structured logging to stderr to avoid corrupting the MCP stdout stream.
 
-Step-by-step through each main file
+How requests flow
+1) MCP client sends a framed JSON-RPC request (e.g., initialize, tools/list, tools/call).
+2) pkg/mcp parses, dispatches to the Registry.
+3) A tool handler in internal/tools validates inputs (lightweight), enforces authz, calls client-go.
+4) Results are serialized to compact JSON and returned as MCP text content.
 
-1) src/server.ts (MCP server entrypoint)
-- Creates a pino logger and initializes Kubernetes clients via getClients(logger). Fails fast if kubeconfig is invalid.
-- Creates a new McpServer({ name, version }).
-- Registers tools by importing and calling registerClusterTools, registerWorkloadTools, registerResourceTools, registerSecretTools.
-- Connects the server over stdio transport so an MCP client can talk to it.
-- Why: Centralizes startup and keeps tools modular per domain (cluster, pods, resources, secrets).
+Safety model in practice
+- Read-only mode (MCP_K8S_READONLY=true) blocks mutating tools: resources.apply, resources.delete, secrets.set, pods.exec.
+- Namespace/kind allowlists further restrict writes.
+- Mutations default to dry-run; set dryRun=false to persist intentionally.
+- Secrets values are never logged and are redacted unless explicitly allowed.
 
-2) src/k8s.ts (Kubernetes client bootstrap)
-- Loads KubeConfig in this order:
-  1. KUBECONFIG env: if multiple paths separated by ':', merges them; otherwise loads the single file.
-  2. In-cluster (for future containerization), fallback to:
-  3. Default (~/.kube/config and platform specifics).
-- Honors K8S_CONTEXT env to explicitly set the context.
-- Instantiates common clients:
-  - CoreV1Api for core resources (pods, secrets, namespaces)
-  - AppsV1Api for workloads
-  - VersionApi for cluster version
-  - Log (streaming logs)
-  - Exec (remote command execution)
-  - PortForward (reserved for future tools)
-- Stores a defaultNamespace (K8S_NAMESPACE or "default").
-- Why: A single, shared place to manage Kubernetes connectivity and provide consistent clients and defaults throughout tools.
-- Note: We intentionally avoid lower-level manual HTTP calls. For generic resources, we use KubernetesObjectApi which abstracts discovery and URL building.
+Build and run (local)
+```bash
+# Build
+go build -o bin/mcp-server ./cmd/server
 
-3) src/schemas.ts (Parameter validation)
-- Defines zod schemas for each tool’s inputs, for example:
-  - ListPodsParams: { namespace?, labelSelector?, fieldSelector?, limit? }
-  - ExecParams: { namespace, name, container?, command[], timeoutSeconds?, dryRun? }
-  - GetResourceParams / ApplyResourceParams / DeleteResourceParams
-  - GetSecretParams / SetSecretParams
-  - SetContextParams
-- Why: This prevents bad input from reaching the Kubernetes API and gives helpful MCP errors (e.g., missing required fields, wrong types).
+# Run
+KUBECONFIG=/absolute/path/to/kubeconfig \
+K8S_CONTEXT=$(kubectl config current-context) \
+K8S_NAMESPACE=default \
+MCP_K8S_READONLY=true \
+LOG_LEVEL=info \
+./bin/mcp-server
+```
 
-4) src/authz.ts (Safety and rate limiting)
-- isReadOnly(): returns true if MCP_K8S_READONLY === 'true'.
-- isNamespaceAllowed(ns): checks namespace against MCP_K8S_NAMESPACE_ALLOWLIST (if provided).
-- isKindAllowed(kind): checks kind against MCP_K8S_KIND_ALLOWLIST (if provided).
-- enforceMutatingGuards(logger, toolName, { namespace, kind, dryRun }):
-  - Throws a clear error if read-only is enabled or if namespace/kind isn’t allowed.
-- Simple token-bucket rate limiter per tool to prevent accidental bursts.
-- redactSecret(): always returns "REDACTED" for safety.
-- Why: Clear, explicit safety controls and guardrails around write/mutating operations.
+Connect from GitHub Copilot MCP
+- Edit ~/.copilot/mcp.json:
+```json
+{
+  "mcpServers": {
+    "k8s-local": {
+      "command": "/absolute/path/to/mcp-k8s-server/bin/mcp-server",
+      "args": [],
+      "env": {
+        "KUBECONFIG": "/home/user/.kube/config",
+        "K8S_CONTEXT": "your-context",
+        "K8S_NAMESPACE": "default",
+        "MCP_K8S_READONLY": "true"
+      }
+    }
+  }
+}
+```
 
-5) src/tools/cluster.ts (Cluster tools)
-- cluster.health
-  - Uses VersionApi to fetch cluster version and returns a compact JSON summary (as text content for MCP).
-- cluster.listContexts
-  - Lists contexts from the loaded kubeconfig and shows the current context.
-- cluster.setContext
-  - Changes current context if it exists in the kubeconfig. Useful if your kubeconfig has multiple clusters.
-- ns.listNamespaces
-  - Lists namespaces and shows name/status/age. Supports a limit parameter to keep responses small.
-- Why: These give quick, safe introspection and control for selecting the right cluster context.
+Tool reference (concise)
+- cluster.health → { status, clusterVersion, timestamp }
+- cluster.listContexts → { current, contexts[] }
+- cluster.setContext({ context }) → { current }
+- ns.listNamespaces({ limit? }) → { namespaces[] }
 
-6) src/tools/workloads.ts (Pod tools)
-- pods.listPods({ namespace?, labelSelector?, fieldSelector?, limit? })
-  - Calls CoreV1Api.listNamespacedPod with selectors to return a small summary per pod (name, phase, node, restarts, age).
-- pods.get({ namespace, name })
-  - Reads a specific Pod and returns metadata, status, container images, init containers, and the last ~10 related Events.
-- pods.logs({ namespace, name, container?, tailLines?, sinceSeconds?, timestamps? })
-  - Uses Log.log streaming API. We capture the stream into a Writable buffer and return the log text (tail default 200 lines). If logs are huge, the final response trims to the last 1000 lines.
-- pods.exec({ namespace, name, command[], container?, timeoutSeconds? }) [mutating]
-  - Uses Exec.exec with a status callback. Returns a minimal `{ exitCode }`.
-  - Guarded by enforceMutatingGuards; blocked in read-only mode.
-- Why: These are common, safe day-to-day operations that Devs and SREs need frequently.
+- pods.listPods({ namespace?, labelSelector?, fieldSelector?, limit? }) → { pods[] }
+- pods.get({ namespace, name }) → { metadata, status, containers[], initContainers[], events[] }
+- pods.logs({ namespace, name, container?, tailLines?, sinceSeconds?, timestamps? }) → multiline text
+- pods.exec({ namespace, name, container?, command[] }) [mutating] → { exitCode }
 
-7) src/tools/resources.ts (Generic GVK tools)
-- resources.get({ group?, version, kind, name?, namespace?, selectors })
-  - Uses KubernetesObjectApi:
-    - If "name" is specified, reads that object.
-    - Otherwise lists objects (optionally in a namespace) with selectors.
-  - Returns a summarized list (apiVersion/kind/name/namespace/uid/creationTimestamp) or a single item.
-- resources.apply({ manifestYAML, fieldManager?, serverSideApply?, dryRun? }) [mutating]
-  - Parses YAML (multi-document supported).
-  - For each object: validates apiVersion/kind/metadata.name, enforces guards, and applies via Server-Side Apply (PatchStrategy.ServerSideApply). Default behavior is dry-run unless you set dryRun=false.
-- resources.delete({ group?, version, kind, name, namespace?, propagationPolicy?, gracePeriodSeconds?, dryRun? }) [mutating]
-  - Uses KubernetesObjectApi.delete with the provided options. Defaults to dry-run unless disabled.
-- Why: This gives a consistent interface to work across native and custom resources (CRDs) without coding per-kind clients.
+- resources.get({ group?, version, kind, name?, namespace?, labelSelector?, fieldSelector?, limit? }) → { item | items[] }
+- resources.apply({ manifestYAML, fieldManager?, dryRun? }) [mutating] → { results[] }
+- resources.delete({ group?, version, kind, name, namespace?, propagationPolicy?, gracePeriodSeconds?, dryRun? }) [mutating] → { status }
 
-8) src/tools/secrets.ts (Secrets tools)
-- secrets.get({ namespace, name, keys?, showValues? })
-  - Reads the Secret and returns only the selected keys (or all), values redacted by default.
-  - If showValues=true and MCP_K8S_READONLY is NOT true, base64 values are included verbatim. Values are never logged.
-- secrets.set({ namespace, name, data, type?, base64Encoded?, createIfMissing?, dryRun? }) [mutating]
-  - Creates or updates the Secret. If base64Encoded=false (default), we encode values for you.
-  - Dry-run by default; guarded by read-only and allowlists.
-- Why: Secrets are sensitive—this design avoids accidental exposure while still enabling controlled updates.
+- secrets.get({ namespace, name, keys?, showValues? }) → { type, data }
+- secrets.set({ namespace, name, data, type?, base64Encoded?, createIfMissing?, dryRun? }) [mutating] → { created|updated, name, keys }
 
-9) Logging, errors, and responses
-- Logging (pino): Minimal logging at info level by default. You can bump LOG_LEVEL=debug for more detail.
-- Errors are surfaced back to the MCP client as tool errors (isError=true) with concise messages.
-- MCP responses:
-  - We return content with type "text" containing a serialized JSON string for compactness and compatibility.
-  - For very large outputs (like logs), we cap lines to keep responses snappy.
+Common gotchas
+- 403/Forbidden: Your kube identity lacks RBAC. Fix roles/bindings.
+- Big outputs: Use selectors and limit to keep responses small.
+- Context confusion: Export K8S_CONTEXT or call cluster.setContext.
 
-10) Environment and configuration
-- KUBECONFIG supports multiple files separated by ":". We merge them so your context list is comprehensive.
-- K8S_CONTEXT lets you pin a specific context on startup; you can also switch at runtime via cluster.setContext.
-- K8S_NAMESPACE sets the default namespace for tools that need one.
-- MCP_K8S_READONLY locks down mutating tools globally.
-- MCP_K8S_NAMESPACE_ALLOWLIST and MCP_K8S_KIND_ALLOWLIST add a second layer of control for write operations.
-
-11) Build/run and MCP client usage
-- Development: npm run dev (ts-node + nodemon)
-- Production: npm run build && npm start (runs dist/server.js)
-- MCP client (GitHub Copilot) attaches via stdio. Add an entry in ~/.copilot/mcp.json pointing at dist/server.js and providing the env vars above.
-
-12) Why design choices were made
-- Use KubernetesObjectApi for generic operations: This avoids manual URL construction and discovery calls and works across CRDs.
-- Default to dry-run on mutating operations: Prevents accidental changes; you must consciously set dryRun=false.
-- Redact secrets by default: Defense-in-depth to prevent accidental leaks in logs or traces.
-- Use object-param style APIs (e.g., readNamespacedPod({ name, namespace })) where supported: Matches the generated client’s latest method signatures, reducing TypeScript errors and making calls explicit.
-- Return compact JSON as text: Keeps payloads small and consistent with MCP output validation while being easy for clients to parse.
-
-13) How to extend safely (examples)
-- Add a new tool file under src/tools (e.g., portforward.ts) and expose registerPortForwardTools(server, logger).
-- Validate inputs with zod in src/schemas.ts.
-- For any mutating tool: call enforceMutatingGuards first, respect dryRun, avoid logging sensitive material.
-- Keep responses concise and structured.
-
-14) Common gotchas
-- 403/Forbidden: Your kube identity (from kubeconfig) doesn’t have enough RBAC. Use kubectl auth can-i or update role bindings.
-- Big outputs: Use label/field selectors and limit to avoid huge payloads.
-- Context confusion: Explicitly set K8S_CONTEXT or call cluster.setContext to switch clusters.
-
-Quick mental model summary
-- server.ts starts an MCP stdio server and registers tool groups.
-- Each tool validates params (schemas.ts), enforces safety (authz.ts), calls the Kubernetes client (k8s.ts clients), and returns compact results.
-- Reads are free; writes are guarded and default to dry-run.
-
-You’re ready!
-- To experiment, try ns.listNamespaces, pods.listPods, and pods.logs.
-- When comfortable, test resources.apply with dryRun=true first, then opt out of dry-run for real changes.
+Extending safely
+- Add new tools under internal/tools and register them in cmd/server.
+- Enforce authz for any write path and default to dry-run.
+- Keep responses compact and avoid logging sensitive data.

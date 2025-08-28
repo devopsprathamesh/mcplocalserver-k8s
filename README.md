@@ -1,6 +1,6 @@
-## mcp-k8s-server
+## mcp-k8s-server (Go)
 
-A local Model Context Protocol (MCP) server for Kubernetes written in TypeScript/Node.js. It exposes safe, composable tools for day-to-day cluster introspection and opt-in write operations with strong safety guards.
+A local Model Context Protocol (MCP) server for Kubernetes written in Go. It exposes safe, composable tools for day-to-day cluster introspection and opt-in write operations with strong safety guards.
 
 ### Who is this for?
 - New to MCP and want to control Kubernetes from Copilot/LLMs
@@ -10,7 +10,7 @@ A local Model Context Protocol (MCP) server for Kubernetes written in TypeScript
 ---
 
 ## 1) Prerequisites
-- Node.js 18+
+- Go 1.22+
 - A working Kubernetes context (kubectl works on your machine)
 - Network access to the cluster API server
 
@@ -22,32 +22,27 @@ If this works, you’re good to proceed.
 
 ---
 
-## 2) Install
+## 2) Build
 ```bash
-cd mcp-k8s-server
-npm i
+go build -o bin/mcp-server ./cmd/server
 ```
 
 ---
 
-## 3) Run (development)
+## 3) Run
 ```bash
-npm run dev
+KUBECONFIG=/absolute/path/to/kubeconfig \
+K8S_CONTEXT=$(kubectl config current-context) \
+K8S_NAMESPACE=default \
+MCP_K8S_READONLY=true \
+LOG_LEVEL=info \
+./bin/mcp-server
 ```
 This runs the JSON-RPC server over stdio, suitable for MCP clients (like GitHub Copilot MCP) to connect.
 
 ---
 
-## 4) Build & Run (production)
-```bash
-npm run build
-npm start
-```
-The compiled server entry is `dist/server.js`.
-
----
-
-## 5) Configuration (Environment Variables)
+## 4) Configuration (Environment Variables)
 - `KUBECONFIG`: absolute path(s) to kubeconfig; supports ':'-separated multiple files
 - `K8S_CONTEXT`: override the current kube context
 - `K8S_NAMESPACE`: default namespace (default: `default`)
@@ -63,14 +58,37 @@ Tips:
 
 ---
 
-## 6) Connect from GitHub Copilot (MCP client)
+## 4.1) Quick local test with k3d
+```bash
+# Create a local Kubernetes cluster
+k3d cluster create mcp-k8s --agents 0 --servers 1
+
+# Export kubeconfig and verify access
+k3d kubeconfig get mcp-k8s > /tmp/kubeconfig-k3d-mcp-k8s
+KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s kubectl get ns
+
+# Build and run the MCP server against k3d
+go build -o bin/mcp-server ./cmd/server
+KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s \
+LOG_LEVEL=info \
+K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s kubectl config current-context) \
+K8S_NAMESPACE=default \
+MCP_K8S_READONLY=true \
+./bin/mcp-server
+```
+
+Then, in your MCP client (e.g., Copilot), configure it to point to the built binary (see section 5).
+
+---
+
+## 5) Connect from GitHub Copilot (MCP client)
 Create or edit `~/.copilot/mcp.json` (Mac/Linux) or the equivalent on your OS:
 ```json
 {
   "mcpServers": {
     "k8s-local": {
-      "command": "node",
-      "args": ["/absolute/path/to/mcp-k8s-server/dist/server.js"],
+      "command": "/absolute/path/to/mcp-k8s-server/bin/mcp-server",
+      "args": [],
       "env": {
         "KUBECONFIG": "/home/user/.kube/config",
         "K8S_CONTEXT": "your-context",
@@ -87,7 +105,7 @@ Then restart Copilot (or your editor) so it picks up the config.
 
 ---
 
-## 7) Quickstart: Ask Copilot to use this server
+## 6) Quickstart: Ask Copilot to use this server
 - "Use `k8s-local` to run `cluster.health`"
 - "List pods in namespace `dev` with label `app=myapi`"
 - "Get last 200 lines of logs for pod `api-abc` in `staging`"
@@ -95,7 +113,7 @@ Then restart Copilot (or your editor) so it picks up the config.
 
 ---
 
-## 8) Safety Model
+## 7) Safety Model
 - **Read-only mode**: set `MCP_K8S_READONLY=true` to block mutating operations: `resources.apply`, `resources.delete`, `secrets.set`, `pods.exec`.
 - **Namespace allowlist**: `MCP_K8S_NAMESPACE_ALLOWLIST=default,dev` restricts writes to those namespaces.
 - **Kind allowlist**: `MCP_K8S_KIND_ALLOWLIST=Deployment,Secret` restricts writes to those kinds.
@@ -105,10 +123,10 @@ Then restart Copilot (or your editor) so it picks up the config.
 
 ---
 
-## 9) Tools Reference (concise)
+## 8) Tools Reference (concise)
 All tools return compact JSON (as text). Use selectors and limits to keep outputs small.
 
-- **cluster.health** → `{ status, clusterVersion, serverAddress, timestamp }`
+- **cluster.health** → `{ status, clusterVersion, timestamp }`
 - **cluster.listContexts** → `{ current, contexts[] }`
 - **cluster.setContext({ context })** → `{ current }`
 - **ns.listNamespaces({ limit? })** → `{ namespaces[] }`
@@ -116,10 +134,10 @@ All tools return compact JSON (as text). Use selectors and limits to keep output
 - **pods.listPods({ namespace?, labelSelector?, fieldSelector?, limit? })** → `{ pods[] }`
 - **pods.get({ namespace, name })** → `{ metadata, status, containers[], initContainers[], events[] }`
 - **pods.logs({ namespace, name, container?, tailLines?, sinceSeconds?, timestamps? })** → multiline text
-- **pods.exec({ namespace, name, container?, command[], timeoutSeconds? }) [mutating]** → `{ exitCode }`
+- **pods.exec({ namespace, name, container?, command[] }) [mutating]** → `{ exitCode }`
 
 - **resources.get({ group?, version, kind, name?, namespace?, labelSelector?, fieldSelector?, limit? })** → `{ item | items[] }`
-- **resources.apply({ manifestYAML, serverSideApply?, fieldManager?, dryRun? }) [mutating]** → `{ results[] }`
+- **resources.apply({ manifestYAML, fieldManager?, dryRun? }) [mutating]** → `{ results[] }`
 - **resources.delete({ group?, version, kind, name, namespace?, propagationPolicy?, gracePeriodSeconds?, dryRun? }) [mutating]** → `{ status }`
 
 - **secrets.get({ namespace, name, keys?, showValues? })** → `{ type, data }` (values redacted unless allowed)
@@ -131,7 +149,7 @@ Notes:
 
 ---
 
-## 10) Examples
+## 9) Examples
 ### Apply a sample deployment (dry-run)
 ```bash
 cat examples/sample-deployment.yaml | pbcopy
@@ -147,74 +165,16 @@ Ask Copilot:
 
 ---
 
-## 11) Troubleshooting
-- **RBAC 403/Forbidden**: Your kube user lacks permissions. Fix your role/rolebinding/clusterrole.
-- **Wrong context**: Set `K8S_CONTEXT` env or call `cluster.setContext`.
-- **Large responses**: Use `limit`, `fieldSelector`, or `labelSelector`.
-- **Timeouts/Network**: Ensure API server is reachable; adjust `MCP_K8S_TIMEOUT_MS` if needed.
-- **Read-only blocks**: If a write tool is blocked, check `MCP_K8S_READONLY` and allowlists.
-
----
-
-## 12) Project Structure
-```
-mcp-k8s-server/
-├─ src/
-│  ├─ server.ts
-│  ├─ k8s.ts
-│  ├─ schemas.ts
-│  ├─ authz.ts
-│  └─ tools/
-│     ├─ cluster.ts
-│     ├─ workloads.ts
-│     ├─ resources.ts
-│     └─ secrets.ts
-├─ examples/
-│  ├─ sample-deployment.yaml
-│  └─ mcp.json
-├─ package.json
-├─ tsconfig.json
-└─ README.md
-```
-
----
-
-## 13) Scripts
-```json
-{
-  "dev": "nodemon --watch src --exec ts-node src/server.ts",
-  "build": "tsc -p tsconfig.json",
-  "start": "node dist/server.js",
-  "lint": "eslint .",
-  "format": "prettier -w ."
-}
-```
-
----
-
-## 14) How it works (high level)
-- The server uses `@modelcontextprotocol/sdk` to expose tools over stdio.
-- Kubernetes access is via `@kubernetes/client-node` with `KubeConfig` and helper clients:
+## 10) How it works (high level)
+- The server implements JSON-RPC 2.0 over stdio using LSP-style framing (Content-Length headers)
+- Kubernetes access is via client-go with:
   - Core APIs for pods/secrets/namespaces
-  - `KubernetesObjectApi` for generic GVK operations (including CRDs)
-- Safety is enforced in `authz.ts` (read-only toggle, namespace/kind allowlists, basic rate limiting).
-- All inputs are validated with `zod` (see `schemas.ts`).
+  - Dynamic client + RESTMapper for generic GVK operations (including CRDs)
+- Safety is enforced in `internal/authz` (read-only toggle, namespace/kind allowlists, basic rate limiting)
 
 ---
 
-## 15) Next steps / Stretch goals
-- Port-forward start/stop tool
-- Watch/streaming tools
-- Generic diff/apply helper using server-side apply dry-run managed fields
-- Docker image and optional metrics endpoint
-
-Happy shipping!
-
----
-
-## 16) Local Testing with k3d (step-by-step)
-
-This guide helps you spin up or reuse a local Kubernetes cluster via k3d and point the MCP server at it.
+## 11) Local Testing with k3d (step-by-step)
 
 Prereqs:
 - k3d installed (e.g., `brew install k3d` on macOS)
@@ -233,27 +193,15 @@ k3d kubeconfig get mycluster > /tmp/kubeconfig-k3d-mycluster
 ```bash
 KUBECONFIG=/tmp/kubeconfig-k3d-mycluster kubectl get ns
 ```
-4. Run the MCP server (production mode is simplest for ESM):
+4. Run the MCP server:
 ```bash
-cd mcp-k8s-server
-npm run build
+GOFLAGS="-buildvcs=false" go build -o bin/mcp-server ./cmd/server
 KUBECONFIG=/tmp/kubeconfig-k3d-mycluster \
 LOG_LEVEL=info \
 K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mycluster kubectl config current-context) \
 K8S_NAMESPACE=default \
 MCP_K8S_READONLY=true \
-npm start
-```
-
-Optional (development mode via ts-node):
-```bash
-# If you see ESM module resolution errors with ts-node, prefer the production mode above.
-KUBECONFIG=/tmp/kubeconfig-k3d-mycluster \
-LOG_LEVEL=info \
-K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mycluster kubectl config current-context) \
-K8S_NAMESPACE=default \
-MCP_K8S_READONLY=true \
-npm run dev
+./bin/mcp-server
 ```
 
 ### B) Create a fresh k3d cluster
@@ -266,16 +214,15 @@ k3d cluster create mcp-k8s --agents 0 --servers 1
 k3d kubeconfig get mcp-k8s > /tmp/kubeconfig-k3d-mcp-k8s
 KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s kubectl get ns
 ```
-3. Run the MCP server (production mode recommended):
+3. Run the MCP server:
 ```bash
-cd mcp-k8s-server
-npm run build
+GOFLAGS="-buildvcs=false" go build -o bin/mcp-server ./cmd/server
 KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s \
 LOG_LEVEL=info \
 K8S_CONTEXT=$(KUBECONFIG=/tmp/kubeconfig-k3d-mcp-k8s kubectl config current-context) \
 K8S_NAMESPACE=default \
 MCP_K8S_READONLY=true \
-npm start
+./bin/mcp-server
 ```
 
 ### C) Test with your MCP client (e.g., GitHub Copilot)
@@ -284,9 +231,26 @@ In Copilot chat, try:
 - "Use `k8s-local` to run `ns.listNamespaces`"
 - "Use `k8s-local` to run `pods.listPods` with `{ \"namespace\": \"default\" }`"
 
-### D) Troubleshooting (k3d specific)
-- If `npm run dev` crashes with `ERR_MODULE_NOT_FOUND` for `*.js` in `src/*`:
-  - Prefer `npm run build && npm start`, or
-  - Adjust the dev script to use `ts-node --esm` and ensure ESM-compatible imports.
-- If kubectl can’t reach the cluster, re-export kubeconfig and verify `K8S_CONTEXT`.
-- If mutating tools are blocked, check `MCP_K8S_READONLY` and allowlists.
+## 5.1) Local validation (no MCP client)
+You can validate the server responds correctly by sending framed JSON-RPC requests over stdio.
+
+```bash
+# Build
+go build -o bin/mcp-server ./cmd/server
+
+# Send initialize and tools/list using a small Python helper
+python3 - <<'PY' | ./bin/mcp-server 2> /tmp/mcp-stderr.log | sed -n '1,200p'
+import json, sys
+
+def send(obj):
+    b = json.dumps(obj,separators=(",", ":")).encode("utf-8")
+    sys.stdout.write(f"Content-Length: {len(b)}\r\n\r\n")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(b)
+    sys.stdout.flush()
+
+send({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"test"}}})
+send({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+PY
+```
+This should print two framed responses for initialize and tools/list.
