@@ -254,3 +254,28 @@ send({"jsonrpc":"2.0","id":2,"method":"tools/list"})
 PY
 ```
 This should print two framed responses for initialize and tools/list.
+
+### Tool call examples
+You can also exercise tool calls directly via `tools/call`:
+
+- cluster.health
+```bash
+python3 -c 'import sys,json
+def send(o):
+  b=json.dumps(o,separators=(",",":")).encode()
+  sys.stdout.write(f"Content-Length: {len(b)}\r\n\r\n"); sys.stdout.flush()
+  sys.stdout.buffer.write(b); sys.stdout.flush()
+send({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cluster.health"}})' \
+| ./bin/mcp-server 2>/tmp/mcp-stderr.log | sed -n "1,200p"
+```
+
+- ns.listNamespaces (limit 5)
+```bash
+python3 -c 'import sys,json
+def send(o):
+  b=json.dumps(o,separators=(",",":")).encode()
+  sys.stdout.write(f"Content-Length: {len(b)}\r\n\r\n"); sys.stdout.flush()
+  sys.stdout.buffer.write(b); sys.stdout.flush()
+send({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ns.listNamespaces","arguments":{"limit":5}}})' \
+| ./bin/mcp-server 2>/tmp/mcp-stderr.log | sed -n "1,200p"
+```
