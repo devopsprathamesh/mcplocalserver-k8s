@@ -30,4 +30,10 @@ Wire it from your MCP client by pointing to the built binary.
 - Uses client-go with RESTMapper for dynamic resources and SSA
 - Structured logs via slog to stderr; stdout reserved for protocol
 
+Example initialize response shape:
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"mcp-k8s-server","version":"0.1.0-go"},"capabilities":{"tools":{}}}}
+```
+
 

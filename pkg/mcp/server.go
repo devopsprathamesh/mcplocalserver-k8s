@@ -34,6 +34,9 @@ type Server struct {
 	// handlers keyed by method name
 	handlers map[string]Handler
 	reg      *Registry
+	// onInitialized is called once, after a successful initialize response is sent
+	onInitialized func(ctx context.Context, s *Server)
+	initOnce      sync.Once
 }
 
 type Handler func(ctx context.Context, params json.RawMessage) (any, *rpcError)
@@ -55,3 +58,22 @@ func (s *Server) Register(method string, h Handler) {
 
 // Registry returns the tool registry so callers can register tools.
 func (s *Server) Registry() *Registry { return s.reg }
+
+// OnInitialized registers a callback that will be run once in the background
+// immediately after the server replies to the first initialize request.
+func (s *Server) OnInitialized(f func(ctx context.Context, srv *Server)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onInitialized = f
+}
+
+func (s *Server) triggerInitialized(ctx context.Context) {
+	s.initOnce.Do(func() {
+		s.mu.RLock()
+		cb := s.onInitialized
+		s.mu.RUnlock()
+		if cb != nil {
+			go cb(ctx, s)
+		}
+	})
+}

@@ -20,16 +20,29 @@ func main() {
 	defer stop()
 
 	server := mcp.NewServer(logger)
-	// Initialize k8s and register tools at startup to avoid mcp<->tools cycles
-	if kc, err := k8s.Load(ctx, logger); err == nil {
-		reg := server.Registry()
+
+	// Register placeholders so tools/list is populated even before k8s is ready
+	reg := server.Registry()
+	tools.RegisterCluster(reg, nil, logger)
+	tools.RegisterWorkloads(reg, nil)
+	tools.RegisterResources(reg, nil)
+	tools.RegisterSecrets(reg, nil)
+
+	// Defer k8s client setup until after MCP initialize response
+	server.OnInitialized(func(bg context.Context, srv *mcp.Server) {
+		kc, err := k8s.Load(bg, logger)
+		if err != nil {
+			logger.Warn("k8s not initialized", slog.String("error", err.Error()))
+			return
+		}
+		reg := srv.Registry()
+		// Re-register concrete implementations over placeholders
 		tools.RegisterCluster(reg, kc, logger)
 		tools.RegisterWorkloads(reg, kc)
 		tools.RegisterResources(reg, kc)
 		tools.RegisterSecrets(reg, kc)
-	} else {
-		logger.Warn("k8s not initialized", slog.String("error", err.Error()))
-	}
+		logger.Info("k8s tools registered")
+	})
 
 	if err := server.Run(ctx, os.Stdin, os.Stdout); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {

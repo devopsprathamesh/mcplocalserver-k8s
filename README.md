@@ -101,7 +101,14 @@ Create or edit `~/.copilot/mcp.json` (Mac/Linux) or the equivalent on your OS:
   }
 }
 ```
-Then restart Copilot (or your editor) so it picks up the config.
+Then restart Copilot (or your editor) so it picks up the config. Ensure the `command` points to the absolute binary path you built above.
+
+Handshake expectations:
+- The server replies to `initialize` immediately with:
+```json
+{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"mcp-k8s-server","version":"0.1.0-go"},"capabilities":{"tools":{}}}}
+```
+- `tools/list` returns the available tools. Kubernetes clients load in the background after `initialize`.
 
 ---
 
@@ -253,7 +260,7 @@ send({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name
 send({"jsonrpc":"2.0","id":2,"method":"tools/list"})
 PY
 ```
-This should print two framed responses for initialize and tools/list.
+This should print two framed responses for initialize and tools/list. All protocol messages are on stdout; logs are on stderr only.
 
 ### Tool call examples
 You can also exercise tool calls directly via `tools/call`:
@@ -269,6 +276,12 @@ send({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cluster.hea
 | ./bin/mcp-server 2>/tmp/mcp-stderr.log | sed -n "1,200p"
 ```
 
+### Convenience script
+Run the included validation script which builds and runs initialize/tools-list automatically:
+```bash
+./scripts/validate.sh
+```
+
 - ns.listNamespaces (limit 5)
 ```bash
 python3 -c 'import sys,json
@@ -279,3 +292,31 @@ def send(o):
 send({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ns.listNamespaces","arguments":{"limit":5}}})' \
 | ./bin/mcp-server 2>/tmp/mcp-stderr.log | sed -n "1,200p"
 ```
+
+## Quick handshake test
+
+- Ensure the binary is built:
+
+```bash
+GOFLAGS=-trimpath ./scripts/test-handshake.sh
+```
+
+- Or manually using NDJSON:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | ./bin/mcp-server
+```
+
+- Or using framed transport (as used by VS Code):
+
+```bash
+python3 - <<'PY' | ./bin/mcp-server
+import json,sys
+msg={"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"cli"}}}
+b=json.dumps(msg).encode()
+sys.stdout.write(f"Content-Length: {len(b)}\r\n\r\n"); sys.stdout.flush()
+sys.stdout.buffer.write(b); sys.stdout.flush()
+PY
+```
+
+The server should respond immediately with a valid JSON-RPC 2.0 result and capabilities. Logs are emitted on stderr only.

@@ -54,10 +54,10 @@ func (fr *framedReader) ReadMessage() ([]byte, error) {
 }
 
 type framedWriter struct {
-	w io.Writer
+	w *bufio.Writer
 }
 
-func newFramedWriter(w io.Writer) *framedWriter { return &framedWriter{w: w} }
+func newFramedWriter(w io.Writer) *framedWriter { return &framedWriter{w: bufio.NewWriter(w)} }
 
 func (fw *framedWriter) WriteJSON(v any) error {
 	b, err := json.Marshal(v)
@@ -67,6 +67,8 @@ func (fw *framedWriter) WriteJSON(v any) error {
 	var out bytes.Buffer
 	fmt.Fprintf(&out, "Content-Length: %d\r\n\r\n", len(b))
 	out.Write(b)
-	_, err = fw.w.Write(out.Bytes())
-	return err
+	if _, err = fw.w.Write(out.Bytes()); err != nil {
+		return err
+	}
+	return fw.w.Flush()
 }

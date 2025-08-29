@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,12 +15,20 @@ import (
 )
 
 func RegisterSecrets(reg *mcp.Registry, k *k8s.Clients) {
-	// secrets.get
+	if k == nil {
+		notReady := func(ctx context.Context, _ json.RawMessage) (any, error) {
+			return nil, errors.New("Kubernetes client not initialized yet")
+		}
+		reg.Register(mcp.Tool{Name: "secrets_get", Description: "Get a secret (redacted by default)", Handler: notReady})
+		reg.Register(mcp.Tool{Name: "secrets_set", Description: "Create/update a secret with provided keys", Handler: notReady})
+		return
+	}
+	// secrets_get
 	reg.Register(mcp.Tool{
-		Name:        "secrets.get",
+		Name:        "secrets_get",
 		Description: "Get a secret (redacted by default)",
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("secrets.get", 10, 5)
+			_ = authz.RateLimit("secrets_get", 10, 5)
 			var p struct {
 				Namespace, Name string
 				Keys            []string
@@ -53,12 +62,12 @@ func RegisterSecrets(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// secrets.set
+	// secrets_set
 	reg.Register(mcp.Tool{
-		Name:        "secrets.set",
+		Name:        "secrets_set",
 		Description: "Create/update a secret with provided keys",
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("secrets.set", 10, 5)
+			_ = authz.RateLimit("secrets_set", 10, 5)
 			var p struct {
 				Namespace, Name string
 				Data            map[string]string
@@ -70,7 +79,7 @@ func RegisterSecrets(reg *mcp.Registry, k *k8s.Clients) {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
-			if err := authz.EnforceMutating("secrets.set", p.Namespace, "Secret"); err != nil {
+			if err := authz.EnforceMutating("secrets_set", p.Namespace, "Secret"); err != nil {
 				return nil, err
 			}
 			existing, _ := k.Clientset.CoreV1().Secrets(p.Namespace).Get(ctx, p.Name, metav1.GetOptions{})
