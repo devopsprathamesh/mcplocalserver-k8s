@@ -21,18 +21,19 @@ func RegisterWorkloads(reg *mcp.Registry, k *k8s.Clients) {
 		notReady := func(ctx context.Context, _ json.RawMessage) (any, error) {
 			return nil, errors.New("Kubernetes client not initialized yet")
 		}
-		reg.Register(mcp.Tool{Name: "pods_list", Description: "List pods with optional selectors", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "pods_get", Description: "Get a pod summary including containers and events", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "pods_logs", Description: "Get pod logs (tail by default)", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "pods_exec", Description: "Execute a command in a pod", Handler: notReady})
+		reg.Register(mcp.Tool{Name: "pods-list-pods", Description: "List pods with optional selectors", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "pods-get", Description: "Get a pod summary including containers and events", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "pods-logs", Description: "Get pod logs (tail by default)", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "pods-exec", Description: "Execute a command in a pod", DirectResult: true, Handler: notReady})
 		return
 	}
-	// pods_list
+	// pods-list-pods
 	reg.Register(mcp.Tool{
-		Name:        "pods_list",
-		Description: "List pods with optional selectors",
+		Name:         "pods-list-pods",
+		Description:  "List pods with optional selectors",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("pods_list", 10, 5)
+			_ = authz.RateLimit("pods-list-pods", 10, 5)
 			var p struct {
 				Namespace     string `json:"namespace"`
 				LabelSelector string `json:"labelSelector"`
@@ -68,12 +69,13 @@ func RegisterWorkloads(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// pods_get
+	// pods-get
 	reg.Register(mcp.Tool{
-		Name:        "pods_get",
-		Description: "Get a pod summary including containers and events",
+		Name:         "pods-get",
+		Description:  "Get a pod summary including containers and events",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("pods_get", 10, 5)
+			_ = authz.RateLimit("pods-get", 10, 5)
 			var p struct{ Namespace, Name string }
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
@@ -116,12 +118,13 @@ func RegisterWorkloads(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// pods_logs
+	// pods-logs
 	reg.Register(mcp.Tool{
-		Name:        "pods_logs",
-		Description: "Get pod logs (tail by default)",
+		Name:         "pods-logs",
+		Description:  "Get pod logs (tail by default)",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("pods_logs", 10, 5)
+			_ = authz.RateLimit("pods-logs", 10, 5)
 			var p struct {
 				Namespace, Name, Container string
 				TailLines                  *int64
@@ -143,12 +146,13 @@ func RegisterWorkloads(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// pods_exec – approximate: 0 if no error, 1 otherwise
+	// pods-exec – approximate: 0 if no error, 1 otherwise
 	reg.Register(mcp.Tool{
-		Name:        "pods_exec",
-		Description: "Execute a command in a pod",
+		Name:         "pods-exec",
+		Description:  "Execute a command in a pod",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("pods_exec", 5, 2)
+			_ = authz.RateLimit("pods-exec", 5, 2)
 			var p struct {
 				Namespace, Name, Container string
 				Command                    []string `json:"command"`
@@ -157,7 +161,7 @@ func RegisterWorkloads(reg *mcp.Registry, k *k8s.Clients) {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
-			if err := authz.EnforceMutating("pods_exec", p.Namespace, "Pod"); err != nil {
+			if err := authz.EnforceMutating("pods-exec", p.Namespace, "Pod"); err != nil {
 				return nil, err
 			}
 			req := k.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(p.Namespace).Name(p.Name).SubResource("exec").Param("container", p.Container)

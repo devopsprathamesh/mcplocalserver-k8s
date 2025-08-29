@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "k8s-local": {
-      "command": "/Users/youruser/Mendix/JiraStories/AI_week/KubernetesLocalMCP-Server/mcp-k8s-server_backup1/bin/mcp-server",
+      "command": "/Users/prathamesh.more/Mendix/JiraStories/AI_week/KubernetesLocalMCP-Server/mcp-k8s-server_backup1/bin/mcp-server",
       "args": [],
       "env": {
-        "KUBECONFIG": "/absolute/path/to/kubeconfig",
-        "K8S_CONTEXT": "your-context",
+        "KUBECONFIG": "/Users/prathamesh.more/.kube/config",
+        "K8S_CONTEXT": "",
         "K8S_NAMESPACE": "default",
         "MCP_K8S_READONLY": "true"
       }

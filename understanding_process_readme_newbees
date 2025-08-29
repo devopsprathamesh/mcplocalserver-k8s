@@ -1,103 +1,107 @@
-mcp-k8s-server – Newbie Guide (Go Edition)
+# Understanding This MCP + Kubernetes Server (Beginner Friendly)
 
-Purpose (What this project does)
-- This is a local MCP (Model Context Protocol) server that lets tools like GitHub Copilot talk to your Kubernetes cluster in a safe, controlled way.
-- It exposes read-mostly tools (list pods, get logs, describe-like info) and opt-in write tools (apply/delete resources, set secrets, exec) guarded by:
-  - Read-only toggle
-  - Namespace and kind allowlists
-  - Dry-run by default for mutations
+Welcome! This document helps new contributors understand how this Go project exposes Kubernetes operations to GitHub Copilot via the Model Context Protocol (MCP).
 
-High-level Architecture (How it’s wired)
-- MCP transport: JSON-RPC 2.0 over stdio using LSP-style framing (Content-Length headers). Logs go to stderr.
-- Server core: Minimal MCP server in Go that implements initialize, tools/list, tools/call and dispatches to a tool registry.
-- Kubernetes access: client-go typed clients (CoreV1, etc.) and dynamic client + RESTMapper for generic GVK operations (including CRDs).
-- Authz & safety: read-only mode, namespace/kind allowlists, and a simple per-tool rate limiter.
+## What is MCP?
 
-Where things live (Project structure)
-- cmd/server/main.go – Entrypoint. Creates logger, loads Kubernetes clients, registers tools, runs stdio server, graceful shutdown.
-- pkg/mcp – Protocol logic (framed stdio transport, JSON-RPC types, tool registry, built-ins).
-- pkg/k8s – Kubernetes client loader and helpers (logs, dynamic discovery, YAML to unstructured).
-- internal/authz – Safety/authorization controls (read-only, allowlists, rate limiting).
-- internal/tools – Tool groups:
-  - cluster.go – cluster.health, cluster.listContexts, cluster.setContext, ns.listNamespaces
-  - workloads.go – pods.listPods, pods.get, pods.logs, pods.exec
-  - resources.go – resources.get/apply/delete (SSA)
-  - secrets.go – secrets.get/set (values redacted unless allowed)
-- examples/* – Sample deployment and MCP client config.
+MCP is a simple protocol that lets a client (like GitHub Copilot) talk to external tools over stdio using JSON-RPC 2.0. The client sends requests such as `initialize`, `tools/list`, and `tools/call`, and the server responds with JSON.
 
-Key packages (and why)
-- client-go: Official Kubernetes Go client for typed APIs, discovery, exec/logs, and dynamic resources.
-- log/slog: Structured logging to stderr to avoid corrupting the MCP stdout stream.
+Our server implements MCP over stdin/stdout:
+- Requests arrive on stdin
+- Responses are written to stdout
+- Logs go to stderr (never stdout)
 
-How requests flow
-1) MCP client sends a framed JSON-RPC request (e.g., initialize, tools/list, tools/call).
-2) pkg/mcp parses, dispatches to the Registry.
-3) A tool handler in internal/tools validates inputs (lightweight), enforces authz, calls client-go.
-4) Results are serialized to compact JSON and returned as MCP text content.
+## How this project connects Copilot to Kubernetes
 
-Safety model in practice
-- Read-only mode (MCP_K8S_READONLY=true) blocks mutating tools: resources.apply, resources.delete, secrets.set, pods.exec.
-- Namespace/kind allowlists further restrict writes.
-- Mutations default to dry-run; set dryRun=false to persist intentionally.
-- Secrets values are never logged and are redacted unless explicitly allowed.
+- The server boots quickly and answers `initialize` immediately
+- After the handshake, it initializes a Kubernetes client (from `KUBECONFIG` or in-cluster) in the background
+- The server registers a set of MCP tools that perform Kubernetes operations (listing pods, getting resources, updating secrets, etc.)
+- The Copilot MCP client calls these tools based on your prompts in VS Code
 
-Build and run (local)
+## Request/Response lifecycle
+
+1. Copilot launches the server using stdio
+2. Copilot sends `initialize`
+3. Server responds immediately with capabilities and starts background Kubernetes setup
+4. Copilot sends `tools/list` to discover available tools
+5. Copilot calls tools using `tools/call` with a `name` and JSON `arguments`
+
+Transports supported:
+- Framed (LSP-style): `Content-Length: N\r\n\r\n<JSON>`
+- NDJSON: each JSON request on its own line (useful for CLI testing)
+
+## Logging and errors
+
+- All logs are written to stderr using Go's `slog` (configured in `cmd/server/main.go`)
+- Only JSON-RPC responses go to stdout
+- Unknown methods return JSON-RPC error `{ "code": -32601, "message": "Method not found" }`
+- Tool errors return JSON-RPC error `{ "code": -32000, "message": "..." }`
+
+## Current tools (kebab-case)
+
+- cluster
+  - `cluster-health`
+  - `cluster-list-contexts`
+  - `cluster-set-context`
+  - `ns-list-namespaces`
+- workloads
+  - `pods-list-pods`
+  - `pods-get`
+  - `pods-logs`
+  - `pods-exec`
+- resources
+  - `resources-get`
+  - `resources-apply`
+  - `resources-delete`
+- secrets
+  - `secrets-get`
+  - `secrets-set`
+- utility
+  - `echo`
+
+Note: If the Kubernetes client is not ready yet, Kubernetes-dependent tools will return `"Kubernetes client not initialized yet"`.
+
+## Common pitfalls
+
+- Tool names must be kebab-case and match `[a-z0-9-]` (no dots, underscores, or CamelCase)
+- Do not block `initialize`—long-running setup runs in the background
+- Do not write logs to stdout (responses only); use stderr for logs
+- Framed mode requires exact `Content-Length` and `\r\n\r\n` separators
+
+## Building and testing quickly
+
 ```bash
-# Build
 go build -o bin/mcp-server ./cmd/server
-
-# Run
-KUBECONFIG=/absolute/path/to/kubeconfig \
-K8S_CONTEXT=$(kubectl config current-context) \
-K8S_NAMESPACE=default \
-MCP_K8S_READONLY=true \
-LOG_LEVEL=info \
-./bin/mcp-server
+# NDJSON quick handshake
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | ./bin/mcp-server
+# Framed example
+./scripts/validate.sh
 ```
 
-Connect from GitHub Copilot MCP
-- Edit ~/.copilot/mcp.json:
-```json
-{
-  "mcpServers": {
-    "k8s-local": {
-      "command": "/absolute/path/to/mcp-k8s-server/bin/mcp-server",
-      "args": [],
-      "env": {
-        "KUBECONFIG": "/home/user/.kube/config",
-        "K8S_CONTEXT": "your-context",
-        "K8S_NAMESPACE": "default",
-        "MCP_K8S_READONLY": "true"
-      }
-    }
-  }
-}
+## How to add a new tool
+
+1. Pick a kebab-case name, e.g., `deployments-list`
+2. Implement the handler in the appropriate file under `internal/tools/` (e.g., `workloads.go`):
+   - Define a `mcp.Tool{Name: "deployments-list", Description: "...", Handler: func(ctx context.Context, params json.RawMessage) (any, error) { ... }}`
+   - Parse `params` into a struct using `json.Unmarshal`
+   - Perform Kubernetes logic using helpers from `pkg/k8s`
+   - Return data as structured Go maps/structs or strings; responses go into MCP content/json wrapper by the registry
+3. Register the tool in the corresponding `Register*` function (e.g., `RegisterWorkloads`)
+4. If the tool needs Kubernetes, it will be unavailable until the client is initialized; optionally add a placeholder in the `k == nil` branch returning `Kubernetes client not initialized yet`
+5. Build and test:
+
+```bash
+go build -o bin/mcp-server ./cmd/server
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | ./bin/mcp-server
 ```
 
-Tool reference (concise)
-- cluster.health → { status, clusterVersion, timestamp }
-- cluster.listContexts → { current, contexts[] }
-- cluster.setContext({ context }) → { current }
-- ns.listNamespaces({ limit? }) → { namespaces[] }
+## Repository overview
 
-- pods.listPods({ namespace?, labelSelector?, fieldSelector?, limit? }) → { pods[] }
-- pods.get({ namespace, name }) → { metadata, status, containers[], initContainers[], events[] }
-- pods.logs({ namespace, name, container?, tailLines?, sinceSeconds?, timestamps? }) → multiline text
-- pods.exec({ namespace, name, container?, command[] }) [mutating] → { exitCode }
+- `cmd/server`: program entry; configures logging to stderr, sets up background K8s init
+- `pkg/mcp`: JSON-RPC types and server loop (framed + NDJSON); tool registry and results
+- `pkg/k8s`: Kubernetes clients and helpers (kubeconfig/in-cluster, resource mapping, logs, etc.)
+- `internal/tools`: tool groups (cluster, workloads, resources, secrets)
+- `scripts`: scripts for validation and handshake
+- `examples`: sample MCP configuration
 
-- resources.get({ group?, version, kind, name?, namespace?, labelSelector?, fieldSelector?, limit? }) → { item | items[] }
-- resources.apply({ manifestYAML, fieldManager?, dryRun? }) [mutating] → { results[] }
-- resources.delete({ group?, version, kind, name, namespace?, propagationPolicy?, gracePeriodSeconds?, dryRun? }) [mutating] → { status }
-
-- secrets.get({ namespace, name, keys?, showValues? }) → { type, data }
-- secrets.set({ namespace, name, data, type?, base64Encoded?, createIfMissing?, dryRun? }) [mutating] → { created|updated, name, keys }
-
-Common gotchas
-- 403/Forbidden: Your kube identity lacks RBAC. Fix roles/bindings.
-- Big outputs: Use selectors and limit to keep responses small.
-- Context confusion: Export K8S_CONTEXT or call cluster.setContext.
-
-Extending safely
-- Add new tools under internal/tools and register them in cmd/server.
-- Enforce authz for any write path and default to dry-run.
-- Keep responses compact and avoid logging sensitive data.
+Happy hacking!

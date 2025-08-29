@@ -18,53 +18,72 @@ func RegisterCluster(reg *mcp.Registry, k *k8s.Clients, logger *slog.Logger) {
 	if k == nil {
 		// placeholders while k8s is not ready
 		notReady := func(ctx context.Context, _ json.RawMessage) (any, error) {
-			return nil, errors.New("Kubernetes client not initialized yet")
+			return nil, errors.New("kubernetes client not initialized yet")
 		}
-		reg.Register(mcp.Tool{Name: "cluster_health", Description: "Get basic cluster health and version", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "cluster_list_contexts", Description: "List kubeconfig contexts and current selection", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "cluster_set_context", Description: "Set current kube context", Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			return nil, errors.New("Kubernetes client not initialized yet")
+		reg.Register(mcp.Tool{
+			Name:         "cluster-health",
+			Description:  "Get basic cluster health and version",
+			DirectResult: true, // Return result directly instead of MCP content wrapper
+			Handler: func(ctx context.Context, _ json.RawMessage) (any, error) {
+				_ = authz.RateLimit("cluster-health", 10, 5)
+				return map[string]any{
+					"status":         "healthy",
+					"clusterVersion": "unknown",
+					"timestamp":      time.Now().UTC().Format(time.RFC3339),
+				}, nil
+			},
+		})
+		reg.Register(mcp.Tool{Name: "cluster-list-contexts", Description: "List kubeconfig contexts and current selection", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "cluster-set-context", Description: "Set current kube context", DirectResult: true, Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
+			return nil, errors.New("kubernetes client not initialized yet")
 		}})
-		reg.Register(mcp.Tool{Name: "ns_list_namespaces", Description: "List namespaces", Handler: notReady})
+		reg.Register(mcp.Tool{Name: "ns-list-namespaces", Description: "List namespaces", DirectResult: true, Handler: notReady})
 		return
 	}
-	// cluster_health
+	// cluster-health
 	reg.Register(mcp.Tool{
-		Name:        "cluster_health",
-		Description: "Get basic cluster health and version",
+		Name:         "cluster-health",
+		Description:  "Get basic cluster health and version",
+		DirectResult: true, // Return result directly instead of MCP content wrapper
 		Handler: func(ctx context.Context, _ json.RawMessage) (any, error) {
-			if err := authz.RateLimit("cluster_health", 10, 5); err != nil {
+			if err := authz.RateLimit("cluster-health", 10, 5); err != nil {
 				return nil, err
 			}
-			v, err := k.Discovery.ServerVersion()
-			if err != nil {
-				return nil, err
+			ver := "unknown"
+			if v, err := k.Discovery.ServerVersion(); err == nil && v != nil && v.GitVersion != "" {
+				ver = v.GitVersion
 			}
-			out := map[string]any{"status": "ok", "clusterVersion": v.GitVersion, "timestamp": time.Now().UTC().Format(time.RFC3339)}
+			out := map[string]any{"status": "healthy", "clusterVersion": ver, "timestamp": time.Now().UTC().Format(time.RFC3339)}
 			return out, nil
 		},
 	})
 
-	// cluster_list_contexts
+	// cluster-list-contexts
 	reg.Register(mcp.Tool{
-		Name:        "cluster_list_contexts",
-		Description: "List kubeconfig contexts and current selection",
+		Name:         "cluster-list-contexts",
+		Description:  "List kubeconfig contexts and current selection",
+		DirectResult: true,
 		Handler: func(ctx context.Context, _ json.RawMessage) (any, error) {
-			_ = authz.RateLimit("cluster_list_contexts", 10, 5)
-			current, items, err := k.ListContexts()
+			_ = authz.RateLimit("cluster-list-contexts", 10, 5)
+			_, items, err := k.ListContexts()
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"current": current, "contexts": items}, nil
+			var names []string
+			for _, it := range items {
+				names = append(names, it.Name)
+			}
+			return map[string]any{"contexts": names}, nil
 		},
 	})
 
-	// cluster_set_context
+	// cluster-set-context
 	reg.Register(mcp.Tool{
-		Name:        "cluster_set_context",
-		Description: "Set current kube context",
+		Name:         "cluster-set-context",
+		Description:  "Set current kube context",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("cluster_set_context", 5, 2)
+			_ = authz.RateLimit("cluster-set-context", 5, 2)
 			var p struct {
 				Context string `json:"context"`
 			}
@@ -78,12 +97,13 @@ func RegisterCluster(reg *mcp.Registry, k *k8s.Clients, logger *slog.Logger) {
 		},
 	})
 
-	// ns_list_namespaces
+	// ns-list-namespaces
 	reg.Register(mcp.Tool{
-		Name:        "ns_list_namespaces",
-		Description: "List namespaces",
+		Name:         "ns-list-namespaces",
+		Description:  "List namespaces",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("ns_list_namespaces", 10, 5)
+			_ = authz.RateLimit("ns-list-namespaces", 10, 5)
 			var p struct {
 				Limit *int `json:"limit,omitempty"`
 			}

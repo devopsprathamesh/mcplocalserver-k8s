@@ -10,8 +10,9 @@ type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	// JSON schema for params (free-form)
-	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
-	Handler     ToolHandler     `json:"-"`
+	InputSchema  json.RawMessage `json:"inputSchema,omitempty"`
+	DirectResult bool            `json:"-"` // If true, return result directly instead of MCP content wrapper
+	Handler      ToolHandler     `json:"-"`
 }
 
 type ToolHandler func(ctx context.Context, params json.RawMessage) (any, error)
@@ -47,7 +48,8 @@ type ToolsCallParams struct {
 
 type TextContent struct {
 	Type string `json:"type"`
-	Text string `json:"text"`
+	Text string `json:"text,omitempty"`
+	Data any    `json:"data,omitempty"`
 }
 
 type ToolsCallResult struct {

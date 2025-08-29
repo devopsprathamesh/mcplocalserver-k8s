@@ -19,17 +19,18 @@ func RegisterResources(reg *mcp.Registry, k *k8s.Clients) {
 		notReady := func(ctx context.Context, _ json.RawMessage) (any, error) {
 			return nil, errors.New("Kubernetes client not initialized yet")
 		}
-		reg.Register(mcp.Tool{Name: "resources_get", Description: "Get or list arbitrary resources by GVK", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "resources_apply", Description: "Apply manifest YAML (server-side apply by default)", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "resources_delete", Description: "Delete a resource by GVK/name", Handler: notReady})
+		reg.Register(mcp.Tool{Name: "resources-get", Description: "Get or list arbitrary resources by GVK", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "resources-apply", Description: "Apply manifest YAML (server-side apply by default)", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "resources-delete", Description: "Delete a resource by GVK/name", DirectResult: true, Handler: notReady})
 		return
 	}
-	// resources_get
+	// resources-get
 	reg.Register(mcp.Tool{
-		Name:        "resources_get",
-		Description: "Get or list arbitrary resources by GVK",
+		Name:         "resources-get",
+		Description:  "Get or list arbitrary resources by GVK",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("resources_get", 10, 5)
+			_ = authz.RateLimit("resources-get", 10, 5)
 			var p struct {
 				Group         *string
 				Version       string
@@ -82,12 +83,13 @@ func RegisterResources(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// resources_apply (server-side apply)
+	// resources-apply (server-side apply)
 	reg.Register(mcp.Tool{
-		Name:        "resources_apply",
-		Description: "Apply manifest YAML (server-side apply by default)",
+		Name:         "resources-apply",
+		Description:  "Apply manifest YAML (server-side apply by default)",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("resources_apply", 10, 5)
+			_ = authz.RateLimit("resources-apply", 10, 5)
 			var p struct {
 				ManifestYAML string  `json:"manifestYAML"`
 				FieldManager *string `json:"fieldManager"`
@@ -107,7 +109,7 @@ func RegisterResources(reg *mcp.Registry, k *k8s.Clients) {
 					results = append(results, map[string]any{"error": err.Error()})
 					continue
 				}
-				if err := authz.EnforceMutating("resources_apply", obj.GetNamespace(), obj.GetKind()); err != nil {
+				if err := authz.EnforceMutating("resources-apply", obj.GetNamespace(), obj.GetKind()); err != nil {
 					results = append(results, map[string]any{"error": err.Error()})
 					continue
 				}
@@ -138,12 +140,13 @@ func RegisterResources(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// resources_delete
+	// resources-delete
 	reg.Register(mcp.Tool{
-		Name:        "resources_delete",
-		Description: "Delete a resource by GVK/name",
+		Name:         "resources-delete",
+		Description:  "Delete a resource by GVK/name",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("resources_delete", 10, 5)
+			_ = authz.RateLimit("resources-delete", 10, 5)
 			var p struct {
 				Group               *string
 				Version, Kind, Name string
@@ -162,7 +165,7 @@ func RegisterResources(reg *mcp.Registry, k *k8s.Clients) {
 			}
 			ns := ptrStr(p.Namespace)
 			ri := k.Dynamic.Resource(gvr).Namespace(ns)
-			if err := authz.EnforceMutating("resources_delete", ns, p.Kind); err != nil {
+			if err := authz.EnforceMutating("resources-delete", ns, p.Kind); err != nil {
 				return nil, err
 			}
 			dr := []string{}

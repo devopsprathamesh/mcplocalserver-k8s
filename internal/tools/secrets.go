@@ -19,16 +19,17 @@ func RegisterSecrets(reg *mcp.Registry, k *k8s.Clients) {
 		notReady := func(ctx context.Context, _ json.RawMessage) (any, error) {
 			return nil, errors.New("Kubernetes client not initialized yet")
 		}
-		reg.Register(mcp.Tool{Name: "secrets_get", Description: "Get a secret (redacted by default)", Handler: notReady})
-		reg.Register(mcp.Tool{Name: "secrets_set", Description: "Create/update a secret with provided keys", Handler: notReady})
+		reg.Register(mcp.Tool{Name: "secrets-get", Description: "Get a secret (redacted by default)", DirectResult: true, Handler: notReady})
+		reg.Register(mcp.Tool{Name: "secrets-set", Description: "Create/update a secret with provided keys", DirectResult: true, Handler: notReady})
 		return
 	}
-	// secrets_get
+	// secrets-get
 	reg.Register(mcp.Tool{
-		Name:        "secrets_get",
-		Description: "Get a secret (redacted by default)",
+		Name:         "secrets-get",
+		Description:  "Get a secret (redacted by default)",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("secrets_get", 10, 5)
+			_ = authz.RateLimit("secrets-get", 10, 5)
 			var p struct {
 				Namespace, Name string
 				Keys            []string
@@ -62,12 +63,13 @@ func RegisterSecrets(reg *mcp.Registry, k *k8s.Clients) {
 		},
 	})
 
-	// secrets_set
+	// secrets-set
 	reg.Register(mcp.Tool{
-		Name:        "secrets_set",
-		Description: "Create/update a secret with provided keys",
+		Name:         "secrets-set",
+		Description:  "Create/update a secret with provided keys",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			_ = authz.RateLimit("secrets_set", 10, 5)
+			_ = authz.RateLimit("secrets-set", 10, 5)
 			var p struct {
 				Namespace, Name string
 				Data            map[string]string
@@ -79,7 +81,7 @@ func RegisterSecrets(reg *mcp.Registry, k *k8s.Clients) {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
-			if err := authz.EnforceMutating("secrets_set", p.Namespace, "Secret"); err != nil {
+			if err := authz.EnforceMutating("secrets-set", p.Namespace, "Secret"); err != nil {
 				return nil, err
 			}
 			existing, _ := k.Clientset.CoreV1().Secrets(p.Namespace).Get(ctx, p.Name, metav1.GetOptions{})

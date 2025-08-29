@@ -20,10 +20,10 @@ LOG_LEVEL=info \
 Wire it from your MCP client by pointing to the built binary.
 
 ### Supported tools
-- cluster.health, cluster.listContexts, cluster.setContext, ns.listNamespaces
-- pods.listPods, pods.get, pods.logs, pods.exec
-- resources.get, resources.apply, resources.delete
-- secrets.get, secrets.set
+- cluster-health, cluster-list-contexts, cluster-set-context, ns-list-namespaces
+- pods-list-pods, pods-get, pods-logs, pods-exec
+- resources-get, resources-apply, resources-delete
+- secrets-get, secrets-set
 
 ### Notes
 - JSON-RPC 2.0 over stdio using LSP-style framing (Content-Length headers)

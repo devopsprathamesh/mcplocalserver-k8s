@@ -16,6 +16,7 @@ func NewRegistry() *Registry { return &Registry{tools: map[string]*Tool{}} }
 func (r *Registry) Register(t Tool) {
 	tt := t // copy
 	r.tools[t.Name] = &tt
+	// Only register the primary tool name, no dotted aliases
 }
 
 func (r *Registry) List() []Tool {
@@ -26,7 +27,8 @@ func (r *Registry) List() []Tool {
 	return out
 }
 
-func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) (ToolsCallResult, error) {
+func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) (interface{}, error) {
+	// Look for exact match only
 	t, ok := r.tools[name]
 	if !ok {
 		return ToolsCallResult{Content: []TextContent{{Type: "text", Text: fmt.Sprintf("tool %s not found", name)}}, IsError: true}, nil
@@ -35,13 +37,7 @@ func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) 
 	if err != nil {
 		return ToolsCallResult{Content: []TextContent{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 	}
-	switch v := res.(type) {
-	case string:
-		return ToolsCallResult{Content: []TextContent{{Type: "text", Text: v}}}, nil
-	case []byte:
-		return ToolsCallResult{Content: []TextContent{{Type: "text", Text: string(v)}}}, nil
-	default:
-		b, _ := json.Marshal(v)
-		return ToolsCallResult{Content: []TextContent{{Type: "text", Text: string(b)}}}, nil
-	}
+
+	// Always wrap in MCP ToolsCallResult with JSON content
+	return ToolsCallResult{Content: []TextContent{{Type: "json", Data: res}}}, nil
 }

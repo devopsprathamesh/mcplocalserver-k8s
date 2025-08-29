@@ -102,14 +102,8 @@ func (s *Server) runFramed(ctx context.Context, r io.Reader, w io.Writer) error 
 				_ = fw.WriteJSON(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32000, Message: err.Error()}})
 				continue
 			}
-			if out.IsError {
-				msg := "tool execution error"
-				if len(out.Content) > 0 {
-					msg = out.Content[0].Text
-				}
-				_ = fw.WriteJSON(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32000, Message: msg}})
-				continue
-			}
+
+			// Always ToolsCallResult now
 			_ = fw.WriteJSON(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: out})
 		default:
 			_ = fw.WriteJSON(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32601, Message: "Method not found"}})
@@ -182,14 +176,7 @@ func (s *Server) runNDJSON(ctx context.Context, r io.Reader, w io.Writer) error 
 				_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32000, Message: err.Error()}})
 				continue
 			}
-			if out.IsError {
-				msg := "tool execution error"
-				if len(out.Content) > 0 {
-					msg = out.Content[0].Text
-				}
-				_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32000, Message: msg}})
-				continue
-			}
+			// Always ToolsCallResult now
 			_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: out})
 		default:
 			_ = enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32601, Message: "Method not found"}})
@@ -204,8 +191,9 @@ func (s *Server) installBuiltins(reg *Registry) {
 
 	// Simple echo tool for readiness and smoke testing
 	reg.Register(Tool{
-		Name:        "echo",
-		Description: "Echo back the provided text",
+		Name:         "echo",
+		Description:  "Echo back the provided text",
+		DirectResult: true,
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
 			var p struct {
 				Text string `json:"text"`
