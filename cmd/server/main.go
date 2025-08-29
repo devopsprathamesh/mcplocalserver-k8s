@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -30,6 +32,10 @@ func main() {
 	}
 
 	if err := server.Run(ctx, os.Stdin, os.Stdout); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+			logger.Info("server stopped (stdin closed)")
+			return
+		}
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
 	}

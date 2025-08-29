@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -30,6 +31,10 @@ func (s *Server) runFramed(ctx context.Context, r io.Reader, w io.Writer) error 
 		}
 		msg, err := fr.ReadMessage()
 		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+				// Graceful shutdown when input stream closes
+				return nil
+			}
 			return err
 		}
 		var req rpcRequest
